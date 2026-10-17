@@ -1,0 +1,290 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://colonel-byte.github.io/ansible-collection-zarf/schema/zarf-v1alpha1-package-prerequisites-schema.json",
+  "$defs": {
+    "Capability": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Name is the capability's name.",
+          "examples": [
+            "fluxcd-engine"
+          ]
+        },
+        "version": {
+          "type": "string",
+          "description": "Version is the capability's version, as a concrete version rather than a range: this is a\nstatement about what was installed, not a constraint on it.",
+          "examples": [
+            "2.9.3"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "description": "Capability is one named, versioned capability the package contributes to the cluster."
+    },
+    "ControllerRequirement": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Name is the Deployment's name.",
+          "examples": [
+            "source-controller",
+            "helm-controller"
+          ]
+        },
+        "namespace": {
+          "type": "string",
+          "description": "Namespace is the namespace it is deployed into.",
+          "default": "flux-system"
+        },
+        "minAvailable": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "MinAvailable is how many replicas must report available. One is enough to reconcile; a\nhigher number is a statement about the package's tolerance for a controller restart during\nits own deployment.",
+          "default": 1
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "description": "ControllerRequirement is one controller Deployment that must be present and available."
+    },
+    "FluxCDRequirement": {
+      "properties": {
+        "version": {
+          "type": "string",
+          "description": "Version is a SemVer range the installed Flux version must satisfy.",
+          "examples": [
+            "\u003e=2.9.0"
+          ]
+        },
+        "controllers": {
+          "items": {
+            "$ref": "#/$defs/ControllerRequirement"
+          },
+          "type": "array",
+          "description": "Controllers are the controller Deployments that must be present and available."
+        },
+        "crds": {
+          "items": {
+            "type": "string",
+            "examples": [
+              "helmreleases.helm.toolkit.fluxcd.io",
+              "ocirepositories.source.toolkit.fluxcd.io"
+            ]
+          },
+          "type": "array",
+          "description": "CRDs are the custom resource definitions that must be established on the cluster."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "FluxCDRequirement requires a GitOps engine that is installed, running, and new enough."
+    },
+    "KubernetesRequirement": {
+      "properties": {
+        "version": {
+          "type": "string",
+          "description": "Version is a SemVer range the API server's version must satisfy.",
+          "examples": [
+            "\u003e=1.30.0",
+            "\u003e=1.30.0 \u003c1.34.0"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "version"
+      ],
+      "description": "KubernetesRequirement constrains the cluster's own version."
+    },
+    "Metadata": {
+      "properties": {
+        "package": {
+          "type": "string",
+          "description": "Package is the zarf package's metadata.name, as written in its zarf.yaml.",
+          "examples": [
+            "operator-external-secrets",
+            "app-fluxcd"
+          ]
+        },
+        "version": {
+          "type": "string",
+          "description": "Version is the zarf package's metadata.version.",
+          "examples": [
+            "2.21.0"
+          ]
+        },
+        "description": {
+          "type": "string",
+          "description": "Description is a sentence saying what the package needs and why, for a human reading the\nfile rather than validating against it."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "package",
+        "version"
+      ],
+      "description": "Metadata names the package the document belongs to."
+    },
+    "PackageRequirement": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Name is the prerequisite package's metadata.name.",
+          "examples": [
+            "app-fluxcd",
+            "cluster-init"
+          ]
+        },
+        "version": {
+          "type": "string",
+          "description": "Version is a SemVer range the deployed package's version must satisfy.",
+          "examples": [
+            "\u003e=2.9.0"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "description": "PackageRequirement is one other Zarf package that must be deployed first."
+    },
+    "Provides": {
+      "properties": {
+        "capabilities": {
+          "items": {
+            "$ref": "#/$defs/Capability"
+          },
+          "type": "array",
+          "description": "Capabilities are named, versioned capabilities other packages may require. The name is a\nlabel this format owns rather than anything Kubernetes knows about, which is what lets two\ndifferent packages provide the same capability -- `fluxcd-engine` from an upstream chart or\nfrom a vendor's bundle."
+        },
+        "crds": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "CRDs are the custom resource definitions the package establishes."
+        },
+        "namespaces": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Namespaces are the namespaces the package creates."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "Provides is what the cluster becomes once the package is deployed: the half of the contract the packages downstream of this one require."
+    },
+    "Requires": {
+      "properties": {
+        "kubernetes": {
+          "$ref": "#/$defs/KubernetesRequirement",
+          "description": "Kubernetes constrains the cluster's own version."
+        },
+        "fluxcd": {
+          "$ref": "#/$defs/FluxCDRequirement",
+          "description": "FluxCD requires a GitOps engine that is installed, running, and new enough."
+        },
+        "storage": {
+          "$ref": "#/$defs/StorageRequirement",
+          "description": "Storage requires somewhere for a PersistentVolumeClaim to land."
+        },
+        "packages": {
+          "items": {
+            "$ref": "#/$defs/PackageRequirement"
+          },
+          "type": "array",
+          "description": "Packages requires other Zarf packages to be deployed first."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "Requires is the environmental prerequisites: what has to be true of the cluster before the package is deployed onto it."
+    },
+    "StorageRequirement": {
+      "properties": {
+        "defaultClass": {
+          "type": "boolean",
+          "description": "DefaultClass requires the cluster to have a StorageClass marked as its default."
+        },
+        "classes": {
+          "items": {
+            "type": "string",
+            "examples": [
+              "local-path",
+              "rook-ceph-block"
+            ]
+          },
+          "type": "array",
+          "description": "Classes are StorageClasses that must exist by name."
+        },
+        "accessModes": {
+          "items": {
+            "type": "string",
+            "enum": [
+              "ReadWriteOnce",
+              "ReadOnlyMany",
+              "ReadWriteMany",
+              "ReadWriteOncePod"
+            ]
+          },
+          "type": "array",
+          "description": "AccessModes are the PersistentVolume access modes the package's claims ask for. A\nsingle-node provider that offers only ReadWriteOnce is a prerequisite failure for a package\nwhose claims are ReadWriteMany, and it is one that surfaces as a Pending Pod rather than as\na deployment error."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "StorageRequirement requires somewhere for a PersistentVolumeClaim to land."
+    }
+  },
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "enum": [
+        "colonel-byte.dev/v1alpha1"
+      ],
+      "description": "APIVersion is fixed to colonel-byte.dev/v1alpha1."
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "PackagePrerequisites"
+      ],
+      "description": "Kind is fixed to PackagePrerequisites."
+    },
+    "metadata": {
+      "$ref": "#/$defs/Metadata",
+      "description": "Metadata names the package the document belongs to."
+    },
+    "requires": {
+      "$ref": "#/$defs/Requires",
+      "description": "Requires is what the cluster must already be, for this package to deploy onto it."
+    },
+    "provides": {
+      "$ref": "#/$defs/Provides",
+      "description": "Provides is what the cluster becomes once it has, for the packages that require it."
+    }
+  },
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "requires"
+  ],
+  "description": "Document is a whole prerequisites document: the file a package ships as its `prerequisites` documentation key."
+}
