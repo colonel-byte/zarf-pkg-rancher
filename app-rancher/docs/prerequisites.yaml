@@ -1,0 +1,35 @@
+# yaml-language-server: $schema=../../schema/zarf-v1alpha1-package-prerequisites-schema.json
+---
+apiVersion: colonel-byte.dev/v1alpha1
+kind: PackagePrerequisites
+metadata:
+  package: app-rancher
+  version: 2.15.2
+  description: >
+    Prerequisites for the Rancher management server: the Kubernetes ceiling its
+    chart enforces, and the Zarf registry its images are rewritten to.
+
+requires:
+  kubernetes:
+    # The rancher 2.15.2 chart declares kubeVersion: < 1.37.0-0, so Helm itself
+    # refuses to install above this. The supported floor is in the SUSE support
+    # matrix and is not stated here: one comparator and one version is all that
+    # gets evaluated, and the ceiling is the one the chart enforces.
+    version: "<1.37.0"
+  packages:
+    # Zarf's registry and agent. `zarf package list` reports this as `init`.
+    - name: init
+
+provides:
+  capabilities:
+    - name: rancher-management-server
+      version: "2.15.2"
+  crds:
+    - clusters.management.cattle.io
+    - projects.management.cattle.io
+    - settings.management.cattle.io
+    - clusters.provisioning.cattle.io
+    - bundles.fleet.cattle.io
+  namespaces:
+    - cattle-system
+    - cattle-fleet-system

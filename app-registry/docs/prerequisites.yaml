@@ -1,0 +1,25 @@
+# yaml-language-server: $schema=../../schema/zarf-v1alpha1-package-prerequisites-schema.json
+---
+apiVersion: colonel-byte.dev/v1alpha1
+kind: PackagePrerequisites
+metadata:
+  package: app-registry
+  version: 1.0.0
+  description: >
+    Fronts the Zarf registry with a pull-only proxy, so it needs the Zarf registry
+    to exist. Each flavor also needs its own router on the cluster - an ingress
+    controller, a Gateway API implementation, or Istio - and that requirement is
+    not statable here: requires permits only kubernetes, fluxcd, storage and
+    packages, and CRDs can only be required under fluxcd. Check it by hand.
+
+requires:
+  packages:
+    # The registry this proxies to. `zarf package list` reports it as `init`.
+    - name: init
+
+provides:
+  capabilities:
+    - name: zarf-registry-external
+      version: "1.0.0"
+  namespaces:
+    - zarf-registry-external

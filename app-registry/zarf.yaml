@@ -1,0 +1,70 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/zarf-dev/zarf/main/zarf.schema.json
+kind: ZarfPackageConfig
+metadata:
+  name: app-registry
+  description: "Pull-only external route to Zarf's in-cluster registry"
+  version: "1.0.0"
+
+documentation:
+  prerequisites: docs/prerequisites.yaml
+  schema: ../schema/zarf-v1alpha1-package-prerequisites-schema.json
+
+variables:
+  - name: REGISTRY_HOSTNAME
+    description: FQDN that downstream clusters will pull from
+    prompt: true
+  - name: REGISTRY_INGRESS_CLASS
+    description: "nginx flavor only: the ingress class of the controller already on the cluster"
+    default: nginx
+  - name: REGISTRY_TLS_SECRET
+    description: "nginx flavor only: a TLS secret in the zarf-registry-external namespace"
+    default: tls-zarf-registry
+  - name: GATEWAY_NAME
+    description: "gateway-api and istio flavors only: the Gateway to attach to"
+    default: ""
+  - name: GATEWAY_NAMESPACE
+    description: "gateway-api and istio flavors only: that Gateway's namespace"
+    default: ""
+
+components:
+  # In every flavor: routing is the front door's job, but refusing writes is not,
+  # and no flavor should expose a writable registry.
+  - name: registry-proxy
+    required: true
+    description: An nginx reverse proxy that serves only GET and HEAD under /v2/
+    manifests:
+      - name: proxy
+        files:
+          - manifests/proxy.yaml
+    images:
+      - docker.io/rancher/mirrored-library-nginx:1.31.3-alpine
+
+  - name: ingress
+    required: true
+    description: Exposes the proxy through an ingress controller
+    only:
+      flavor: nginx
+    manifests:
+      - name: ingress
+        files:
+          - manifests/ingress.yaml
+
+  - name: http-route
+    required: true
+    description: Exposes the proxy by attaching an HTTPRoute to an existing Gateway
+    only:
+      flavor: gateway-api
+    manifests:
+      - name: http-route
+        files:
+          - manifests/httproute.yaml
+
+  - name: virtual-service
+    required: true
+    description: Exposes the proxy by attaching a VirtualService to an Istio Gateway
+    only:
+      flavor: istio
+    manifests:
+      - name: virtual-service
+        files:
+          - manifests/virtualservice.yaml

@@ -1,0 +1,22 @@
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: zarf-registry
+  namespace: zarf-registry-external
+spec:
+  # The Gateway is infrastructure owned elsewhere, so this attaches to one rather
+  # than creating it. Its `allowedRoutes` has to admit this namespace.
+  parentRefs:
+    - name: ###ZARF_VAR_GATEWAY_NAME###
+      namespace: ###ZARF_VAR_GATEWAY_NAMESPACE###
+  hostnames:
+    - ###ZARF_VAR_REGISTRY_HOSTNAME###
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /v2/
+      backendRefs:
+        - name: zarf-registry-proxy
+          port: 8080

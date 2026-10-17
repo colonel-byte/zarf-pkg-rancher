@@ -1,0 +1,27 @@
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: zarf-registry
+  namespace: zarf-registry-external
+  annotations:
+    # Without this, ingress-nginx truncates layer transfers at its 1m default.
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+spec:
+  ingressClassName: ###ZARF_VAR_REGISTRY_INGRESS_CLASS###
+  tls:
+    - hosts:
+        - ###ZARF_VAR_REGISTRY_HOSTNAME###
+      secretName: ###ZARF_VAR_REGISTRY_TLS_SECRET###
+  rules:
+    - host: ###ZARF_VAR_REGISTRY_HOSTNAME###
+      http:
+        paths:
+          - path: /v2/
+            pathType: Prefix
+            backend:
+              service:
+                name: zarf-registry-proxy
+                port:
+                  number: 8080

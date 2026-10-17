@@ -1,0 +1,40 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/zarf-dev/zarf/main/zarf.schema.json
+kind: ZarfPackageConfig
+metadata:
+  name: app-rancher
+  description: Rancher management server (air-gapped HA)
+  version: "2.15.2"
+
+documentation:
+  prerequisites: docs/prerequisites.yaml
+  # Packaged too, so the document can be validated where the tarball is opened.
+  schema: ../schema/zarf-v1alpha1-package-prerequisites-schema.json
+
+variables:
+  - name: RANCHER_HOSTNAME
+    description: FQDN the Rancher ingress answers on
+    prompt: true
+  - name: RANCHER_INGRESS_CLASS
+    description: Ingress class of the controller already on the cluster
+    default: nginx
+
+components:
+  - name: rancher
+    required: true
+    charts:
+      - name: rancher
+        url: https://releases.rancher.com/server-charts/stable
+        version: 2.15.2
+        namespace: cattle-system
+        valuesFiles:
+          - values/rancher.yaml
+    images:
+      # `zarf dev find-images . --kube-version 1.33.0` renders only the first two.
+      # The rest are pulled by Rancher after install, so the agent rewrites them to
+      # the Zarf registry and they must be in the package or they ImagePullBackOff.
+      - docker.io/rancher/rancher:v2.15.2
+      - docker.io/rancher/shell:v0.8.2
+      - docker.io/rancher/rancher-webhook:v0.11.3
+      - docker.io/rancher/fleet:v0.16.2
+      - docker.io/rancher/fleet-agent:v0.16.2
+      - docker.io/rancher/remotedialer-proxy:v0.8.2

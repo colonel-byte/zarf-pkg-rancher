@@ -1,0 +1,20 @@
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: zarf-registry
+  namespace: zarf-registry-external
+spec:
+  hosts:
+    - ###ZARF_VAR_REGISTRY_HOSTNAME###
+  gateways:
+    - ###ZARF_VAR_GATEWAY_NAMESPACE###/###ZARF_VAR_GATEWAY_NAME###
+  http:
+    - match:
+        - uri:
+            prefix: /v2/
+      route:
+        - destination:
+            host: zarf-registry-proxy.zarf-registry-external.svc.cluster.local
+            port:
+              number: 8080

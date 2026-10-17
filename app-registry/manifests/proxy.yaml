@@ -1,0 +1,107 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: zarf-registry-external
+  # Not the `zarf` namespace: that one is agent-ignored, so this pod's image
+  # reference would not be rewritten to the Zarf registry and would be pulled
+  # from Docker Hub, which does not exist in the air gap.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zarf-registry-proxy
+  namespace: zarf-registry-external
+data:
+  nginx.conf: |
+    events {}
+    http {
+      access_log /dev/stdout;
+      server {
+        listen 8080;
+
+        location = /healthz { return 200 "ok\n"; }
+
+        location /v2/ {
+          # The whole point of this package: the registry holds a push user, so an
+          # external route without this makes the air-gap registry writable from
+          # outside. GET and HEAD are everything a kubelet needs to pull.
+          limit_except GET HEAD { deny all; }
+
+          # shortcut: the upstream is resolved once at startup, so nginx must be
+          # restarted if the Zarf registry Service is recreated (a re-init, for
+          # instance). Deferring it needs a `resolver` directive with a literal
+          # cluster-DNS address; revisit if re-inits become routine.
+          proxy_pass http://zarf-docker-registry.zarf.svc.cluster.local:5000;
+          proxy_set_header Host $host;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+
+          # Image layers are far larger than nginx's defaults allow.
+          client_max_body_size 0;
+          proxy_buffering off;
+          proxy_read_timeout 300s;
+        }
+
+        location / { return 404; }
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zarf-registry-proxy
+  namespace: zarf-registry-external
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: zarf-registry-proxy
+  template:
+    metadata:
+      labels:
+        app: zarf-registry-proxy
+    spec:
+      containers:
+        - name: nginx
+          image: docker.io/rancher/mirrored-library-nginx:1.31.3-alpine
+          ports:
+            - containerPort: 8080
+              name: http
+          volumeMounts:
+            - name: config
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              cpu: "1"
+              memory: 128Mi
+      volumes:
+        - name: config
+          configMap:
+            name: zarf-registry-proxy
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zarf-registry-proxy
+  namespace: zarf-registry-external
+spec:
+  selector:
+    app: zarf-registry-proxy
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: http

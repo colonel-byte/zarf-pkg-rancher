@@ -1,0 +1,19 @@
+---
+hostname: ###ZARF_VAR_RANCHER_HOSTNAME###
+replicas: 3
+
+ingress:
+  ingressClassName: ###ZARF_VAR_RANCHER_INGRESS_CLASS###
+  tls:
+    # `secret` needs no cert-manager. Create tls-rancher-ingress (and tls-ca if
+    # privateCA) in cattle-system before deploying.
+    source: secret
+
+# privateCA: true
+
+# Bundled charts, because the cluster cannot reach git.rancher.io.
+useBundledSystemChart: true
+
+# systemDefaultRegistry is inherited by downstream clusters, so it must be an
+# address they can reach -- never Zarf's internal nodeport registry.
+systemDefaultRegistry: ""
