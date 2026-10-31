@@ -10,7 +10,7 @@ metadata:
     CRD it writes to and the cattle-global-data namespace it puts the Secret in both come
     from the Rancher server. What it cannot state is the Keycloak realm on the other
     end, which is off-cluster and so outside anything requires can express. Check that by
-    hand.
+    hand. If the Keycloak realm is served with an internal CA, that CA must be in the Rancher pod's own trust store - `additionalTrustedCAs: true` plus a `tls-ca-additional` secret in cattle-system. The AuthConfig's `certificate` field does not do this for OIDC.
 
 requires:
   packages:

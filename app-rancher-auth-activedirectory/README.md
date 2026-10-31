@@ -26,16 +26,18 @@ zarf package deploy zarf-package-app-rancher-auth-activedirectory-amd64-1.0.0.ta
   --set AD_SERVICE_ACCOUNT_PASSWORD=<bind password>
 ```
 
-| Variable                      | Prompted | Meaning                                               |
-| ----------------------------- | -------- | ----------------------------------------------------- |
-| `AD_SERVERS`                  | yes      | domain controller hostname or IP                      |
-| `AD_SERVICE_ACCOUNT_USERNAME` | yes      | UPN or DN of the bind user, e.g. `bind@example.com`   |
-| `AD_USER_SEARCH_BASE`         | yes      | base DN to search users under                         |
-| `AD_PORT`                     | no       | default `389`                                         |
-| `AD_TLS`                      | no       | `true` for LDAPS on that port; default `false`        |
-| `AD_GROUP_SEARCH_BASE`        | no       | Rancher falls back to the user search base when empty |
-| `AD_DEFAULT_LOGIN_DOMAIN`     | no       | NetBIOS domain prepended to bare usernames at login   |
-| `AD_SERVICE_ACCOUNT_PASSWORD` | no       | `secret` component only; pass with `--set`            |
+| Variable                      | Prompted | Meaning                                                   |
+| ----------------------------- | -------- | --------------------------------------------------------- |
+| `AD_SERVERS`                  | yes      | domain controller hostname or IP                          |
+| `AD_SERVICE_ACCOUNT_USERNAME` | yes      | UPN or DN of the bind user, e.g. `bind@example.com`       |
+| `AD_USER_SEARCH_BASE`         | yes      | base DN to search users under                             |
+| `AD_PORT`                     | no       | default `389`                                             |
+| `AD_TLS`                      | no       | `true` for LDAPS on that port; default `false`            |
+| `AD_STARTTLS`                 | no       | `true` to upgrade the plain port instead; default `false` |
+| `AD_CONNECTION_TIMEOUT`       | no       | dial and operation timeout in ms; default `5000`          |
+| `AD_GROUP_SEARCH_BASE`        | no       | Rancher falls back to the user search base when empty     |
+| `AD_DEFAULT_LOGIN_DOMAIN`     | no       | NetBIOS domain prepended to bare usernames at login       |
+| `AD_SERVICE_ACCOUNT_PASSWORD` | no       | `secret` component only; pass with `--set`                |
 
 `AD_SERVICE_ACCOUNT_PASSWORD` is deliberately not prompted. Zarf prompts per package, not per selected component, so prompting would demand a password that an out-of-band deploy does not need.
 
@@ -43,7 +45,29 @@ Everything else is a literal in `manifests/authconfig.yaml` set to Rancher's Act
 
 `servers` holds one entry. A Zarf variable substitutes a string, not a YAML list, so more than one domain controller means adding entries by hand - marked with a `shortcut:` comment in the manifest.
 
-If `AD_TLS` is `true`, set `certificate` in the manifest to the PEM chain of the CA that issued the DC's certificate; Rancher will not fall back to the system trust store.
+## A directory behind an internal CA
+
+Two routes, and they are additive rather than either-or. `NewCAPool` starts from the pod's system cert pool and appends the AuthConfig's `certificate` field:
+
+```go
+pool, err := x509.SystemCertPool()
+pool.AppendCertsFromPEM([]byte(cert))
+```
+
+So with `AD_TLS: true` you can either
+
+- put the PEM chain of the CA that issued the domain controller's certificate in the AuthConfig's `certificate` field, as a block scalar in `manifests/authconfig.yaml`, or
+- add it to the Rancher pod's own trust store once, with `additionalTrustedCAs: true` in `app-rancher` and a `tls-ca-additional` secret in `cattle-system` keyed `ca-additional.pem`.
+
+The second is the better default if the same internal CA also signs your OIDC provider, your registry and everything else - it is one place instead of one per AuthConfig, and it is the only route that works for Keycloak OIDC at all. The first keeps the trust next to the thing that needs it.
+
+Three ways this goes wrong:
+
+**A malformed PEM is silent.** `AppendCertsFromPEM` returns a bool saying whether it parsed anything, and Rancher ignores it. A truncated chain, a DER file, or a PEM pasted with broken indentation appends nothing and you get a generic `x509: certificate signed by unknown authority` - identical to having configured no CA at all.
+
+**The certificate's SAN must match ``AD_SERVERS`` exactly.** The dialer sets `ServerName` to the string from ``AD_SERVERS``, so an IP address there needs an IP SAN on the domain controller's certificate, and a short hostname needs that short hostname. `InsecureSkipVerify` is hardcoded `false`, so there is no escape hatch.
+
+**`AD_STARTTLS` upgrades a connection that started in the clear.** It dials plaintext on the same port and then negotiates, using the same `ServerName`. `AD_TLS` wins if both are true - the dialer checks `TLS` first and never reaches the `startTLS` branch. With both false there is no TLS at all and the bind password crosses the network in the clear - which is the default this package ships, so set one of them.
 
 ## After deploying
 

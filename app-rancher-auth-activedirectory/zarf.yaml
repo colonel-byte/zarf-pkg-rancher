@@ -22,9 +22,19 @@ variables:
   - name: AD_PORT
     description: LDAP port
     default: "389"
+    pattern: "^[0-9]+$"
   - name: AD_TLS
     description: true to use LDAPS on the port above
     default: "false"
+    pattern: "^(true|false)$"
+  - name: AD_STARTTLS
+    description: true to upgrade the plain port with STARTTLS instead; ignored when AD_TLS is true
+    default: "false"
+    pattern: "^(true|false)$"
+  - name: AD_CONNECTION_TIMEOUT
+    description: LDAP dial and operation timeout, in milliseconds
+    default: "5000"
+    pattern: "^[0-9]+$"
   - name: AD_GROUP_SEARCH_BASE
     description: Base DN to search groups under; Rancher falls back to the user search base when empty
     default: ""

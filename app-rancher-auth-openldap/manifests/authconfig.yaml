@@ -21,8 +21,8 @@ servers:
   - "###ZARF_VAR_LDAP_SERVERS###"
 port: ###ZARF_VAR_LDAP_PORT###
 tls: ###ZARF_VAR_LDAP_TLS###
-starttls: false
-connectionTimeout: 5000
+starttls: ###ZARF_VAR_LDAP_STARTTLS###
+connectionTimeout: ###ZARF_VAR_LDAP_CONNECTION_TIMEOUT###
 
 userSearchBase: "###ZARF_VAR_LDAP_USER_SEARCH_BASE###"
 groupSearchBase: "###ZARF_VAR_LDAP_GROUP_SEARCH_BASE###"

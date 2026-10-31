@@ -11,7 +11,10 @@ on. This asserts the three things Rancher's ReadFromSecret needs, offline:
   - the key is the lowercased field name, which is what ReadFromSecret looks for
 
 It also substitutes the package's own variable defaults and re-parses, so an unquoted
-`###ZARF_VAR_...###` that renders to invalid YAML fails here rather than at deploy.
+`###ZARF_VAR_...###` that renders to invalid YAML fails here rather than at deploy, and it
+requires a `pattern` on every variable that renders unquoted: those fields are decoded as a
+bool or an int by Rancher, and a bad `--set` otherwise stores a string that fails at login
+rather than at deploy.
 
 Exits non-zero on the first failure. Run it before `zarf package create`.
 """
@@ -43,6 +46,22 @@ def defaults(package_dir):
     return {v["name"]: v.get("default") or "x" for v in package["variables"]}
 
 
+def unguarded(package_dir):
+    """Variables used outside quotes in a manifest but carrying no `pattern` in zarf.yaml."""
+    package = yaml.safe_load((package_dir / "zarf.yaml").read_text())
+    guarded = {v["name"] for v in package["variables"] if v.get("pattern")}
+
+    found = set()
+    for path in sorted((package_dir / "manifests").glob("*.yaml")):
+        for line in path.read_text().splitlines():
+            # An unquoted substitution is one whose line has no quote before it.
+            key, _, value = line.partition(": ")
+            if value.startswith("###ZARF_VAR_") and value.endswith("###"):
+                found.add(value.strip("#").removeprefix("ZARF_VAR_"))
+
+    return sorted(found - guarded)
+
+
 def load(path):
     """Parse a manifest with its variables substituted, as Zarf will render it."""
     values = defaults(path.parent.parent)
@@ -68,6 +87,9 @@ def check(package_dir, errors):
 
     if not configs:
         sys.exit(f"no AuthConfig manifest found in {package_dir}")
+
+    for name in unguarded(package_dir):
+        errors.append(f"{package_dir.name}: {name} renders unquoted but has no `pattern` in zarf.yaml")
 
     for path, config in configs:
         for field, key in SECRET_FIELDS.items():

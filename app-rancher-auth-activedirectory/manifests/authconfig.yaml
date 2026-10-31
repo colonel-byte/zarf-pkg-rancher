@@ -21,7 +21,8 @@ servers:
   - "###ZARF_VAR_AD_SERVERS###"
 port: ###ZARF_VAR_AD_PORT###
 tls: ###ZARF_VAR_AD_TLS###
-connectionTimeout: 5000
+starttls: ###ZARF_VAR_AD_STARTTLS###
+connectionTimeout: ###ZARF_VAR_AD_CONNECTION_TIMEOUT###
 
 userSearchBase: "###ZARF_VAR_AD_USER_SEARCH_BASE###"
 groupSearchBase: "###ZARF_VAR_AD_GROUP_SEARCH_BASE###"

@@ -105,7 +105,9 @@ Because that is the state Rancher's own secretmigrator converges on, the committ
 
 Each package has two components. `authconfig` is required; `secret` is not, and deselecting it is how a Secret from SOPS, sealed-secrets, External Secrets or Ansible gets used instead - the AuthConfig is byte-identical either way, because the reference it carries is a constant rather than a variable.
 
-[`docs/rancher-auth-secret-references.md`](rancher-auth-secret-references.md) is the whole story: where the names come from, why the OIDC Secret must hold exactly one key, and why `enabled: false` in git deletes users rather than disabling a provider. Before building, `./hack/check-auth-secret-refs.py` asserts offline that every reference resolves - worth running, because a typo here does not fail the deploy, it fails the first login attempt in an air gap.
+If the auth server itself sits behind an internal CA - which in an air gap it usually does - the trust goes in `app-rancher`, not here: `additionalTrustedCAs: true` plus a `tls-ca-additional` secret in `cattle-system` keyed `ca-additional.pem`. That is Rancher's *outbound* trust, and it is not `privateCA`, which is the chain Rancher serves to agents. For LDAP and AD the AuthConfig's own `certificate` field works too; for Keycloak OIDC it does not, because there the field is a client certificate rather than a CA.
+
+[`docs/rancher-auth-secret-references.md`](rancher-auth-secret-references.md) is the whole story: where the names come from, why the OIDC Secret must hold exactly one key, why `enabled: false` in git deletes users rather than disabling a provider, and the internal-CA details above. Before building, `./hack/check-auth-secret-refs.py` asserts offline that every reference resolves - worth running, because a typo here does not fail the deploy, it fails the first login attempt in an air gap.
 
 ## Mirror the rest, and expose it
 

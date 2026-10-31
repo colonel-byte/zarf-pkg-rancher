@@ -37,6 +37,42 @@ zarf package deploy zarf-package-app-rancher-auth-keycloak-amd64-1.0.0.tar.zst \
 
 The five endpoint fields are built from `OIDC_ISSUER` using Keycloak's standard `/protocol/openid-connect/...` layout, so there is nothing else to set. In Keycloak, the client needs `https://<RANCHER_HOSTNAME>/verify-auth` as a valid redirect URI and a `groups` claim mapper if you want group membership.
 
+## Keycloak behind an internal CA
+
+**The AuthConfig's `certificate` field will not do this.** It looks like a trust field and is not one. `getHTTPClient` in `oidc_client.go` only touches it when `certificate` *and* `privateKey` are both set, and in that branch it loads them as a **client** certificate pair for mTLS:
+
+```go
+pool, err := x509.SystemCertPool()
+if certificate != "" && key != "" {
+    certs, err := getClientCertificates(certificate, key)   // tls.X509KeyPair
+    pool.AppendCertsFromPEM([]byte(certificate))
+    ...
+}
+```
+
+A CA PEM on its own, with no `privateKey`, falls past the `if` and is silently ignored - you get the system pool and an `x509: certificate signed by unknown authority` that names nothing. A CA PEM paired with some unrelated key is worse: `tls.X509KeyPair` fails and login errors out.
+
+So the only route is the Rancher pod's own trust store. In `app-rancher`:
+
+```yaml
+additionalTrustedCAs: true
+```
+
+and a secret in `cattle-system` holding the internal CA, keyed exactly `ca-additional.pem`:
+
+```bash
+kubectl -n cattle-system create secret generic tls-ca-additional \
+  --from-file=ca-additional.pem=/path/to/internal-ca.crt
+```
+
+The chart mounts that at `/etc/pki/trust/anchors/ca-additional.pem`, the trust-anchor directory the container's `update-ca-certificates` reads at startup, so it lands in the system pool that `x509.SystemCertPool()` returns. **Rancher pods must be restarted** after the secret changes - the mount updates, the trust store does not re-import.
+
+Do not reach for `privateCA: true` instead. That is a different secret (`tls-ca`, keyed `cacerts.pem`, mounted at `/etc/rancher/ssl/cacerts.pem`) and a different job: it is the chain Rancher *serves to downstream agents* so they trust Rancher's own ingress certificate. It does nothing for Rancher's outbound TLS to Keycloak. Conflating the two is the usual way an afternoon disappears.
+
+One piece of luck: `FetchAuthURL` does OIDC discovery with a bare `http.Client` and no custom pool at all, but it returns early when `authEndpoint` is already set - which this package always sets. Leave it set.
+
+If you do want mTLS to Keycloak, set both `certificate` and `privateKey`. `privateKey` is a migrated field like the client secret, so it belongs in `cattle-global-data/keycloakoidcconfig-privatekey` under the key `privatekey`, referenced the same way.
+
 ## After deploying
 
 ```bash

@@ -11,6 +11,12 @@ ingress:
 
 # privateCA: true
 
+# Needed if an auth server, or anything else Rancher dials, uses an internal CA. Create
+# tls-ca-additional in cattle-system keyed exactly `ca-additional.pem`; the chart mounts it
+# by subPath into the trust-anchor dir, so a differently-named key mounts nothing. This is
+# Rancher's *outbound* trust, which privateCA above is not. Restart the pods after rotating.
+# additionalTrustedCAs: true
+
 # Bundled charts, because the cluster cannot reach git.rancher.io.
 useBundledSystemChart: true
 

@@ -10,7 +10,7 @@ metadata:
     CRD it writes to and the cattle-global-data namespace it puts the Secret in both come
     from the Rancher server. What it cannot state is the Active Directory domain on the other
     end, which is off-cluster and so outside anything requires can express. Check that by
-    hand.
+    hand. If the domain controller is served with an internal CA, that CA goes either in the AuthConfig's `certificate` field or in the Rancher pod's trust store via `additionalTrustedCAs`.
 
 requires:
   packages:

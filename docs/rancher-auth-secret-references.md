@@ -101,6 +101,96 @@ kubectl get authconfig keycloakoidc -o yaml | grep clientSecret
 
 Log in through the provider, then run it again. Unchanged is the proof there is no drift.
 
+## Auth servers behind an internal CA
+
+Air-gapped Keycloak and air-gapped LDAP are almost always behind an internal CA, and the three providers do not agree on how to trust one. The field that looks like the answer - `certificate`, present on all of them - means two different things.
+
+| Provider         | `certificate` field                         | Appended to the trust pool?        | Route that works                     |
+| ---------------- | ------------------------------------------- | ---------------------------------- | ------------------------------------ |
+| OpenLDAP         | a CA PEM                                    | yes, on top of the system pool     | the field, or `additionalTrustedCAs` |
+| Active Directory | a CA PEM                                    | yes, on top of the system pool     | the field, or `additionalTrustedCAs` |
+| Keycloak OIDC    | a **client** certificate, paired with a key | only when `privateKey` is also set | `additionalTrustedCAs` only          |
+
+### LDAP and Active Directory: additive
+
+`NewCAPool` starts from the pod's system pool and appends the field, so the two routes compose rather than compete:
+
+```go
+func NewCAPool(cert string) (*x509.CertPool, error) {
+    pool, err := x509.SystemCertPool()
+    if err != nil {
+        return nil, err
+    }
+    pool.AppendCertsFromPEM([]byte(cert))
+    return pool, nil
+}
+```
+
+Either put the CA PEM in the AuthConfig as a block scalar, or trust it once in the Rancher pod. Note what is *not* checked: `AppendCertsFromPEM` returns a bool saying whether it parsed anything, and that return value is discarded. A truncated chain, a DER file, or a PEM whose indentation got mangled on the way into YAML appends nothing at all, and the failure is a generic `x509: certificate signed by unknown authority` - indistinguishable from having configured no CA.
+
+The dialer also pins the hostname:
+
+```go
+tlsConfig = &tls.Config{RootCAs: caPool, InsecureSkipVerify: false, ServerName: server}
+```
+
+`ServerName` comes from the `servers` entry verbatim, and `InsecureSkipVerify` is hardcoded `false`. So the server certificate's SAN has to match exactly what you put in `servers` - an IP there needs an IP SAN, a short hostname needs that short hostname - and there is no flag to turn verification off.
+
+### Keycloak OIDC: the field is a trap
+
+`getHTTPClient` in `oidc_client.go` reads `certificate` only in the branch where `privateKey` is also non-empty, and that branch parses the pair with `tls.X509KeyPair` as a **client** certificate for mTLS:
+
+```go
+pool, err := x509.SystemCertPool()
+if certificate != "" && key != "" {
+    certs, err := getClientCertificates(certificate, key)   // tls.X509KeyPair
+    pool.AppendCertsFromPEM([]byte(certificate))
+    ...
+}
+transport := http.DefaultTransport.(*http.Transport).Clone()
+transport.TLSClientConfig.RootCAs = pool
+```
+
+A CA certificate on its own is therefore **ignored outright** - no error, no log line, just the system pool and an unknown-authority failure at login. A CA certificate paired with an unrelated key is worse, because `tls.X509KeyPair` fails and the login errors out entirely.
+
+### The route that covers everything
+
+Trust the internal CA in the Rancher pod, once, in `app-rancher`:
+
+```yaml
+additionalTrustedCAs: true
+```
+
+```bash
+kubectl -n cattle-system create secret generic tls-ca-additional \
+  --from-file=ca-additional.pem=/path/to/internal-ca.crt
+```
+
+The key must be exactly `ca-additional.pem`; the chart mounts it by `subPath`, so a differently-named key mounts nothing. It lands at `/etc/pki/trust/anchors/ca-additional.pem`, the trust-anchor directory the container's `update-ca-certificates` reads at startup, which is what `x509.SystemCertPool()` then returns - and that pool is the base for all three providers plus everything else Rancher dials. **Restart the Rancher pods** after creating or rotating the secret: the mount updates live, the imported trust store does not.
+
+This is a prerequisite the `PackagePrerequisites` documents cannot express - `requires` permits only `kubernetes`, `fluxcd`, `storage` and `packages` - so it lives in prose in each package's description, the same way `app-registry`'s router requirement does.
+
+### Not `privateCA`
+
+`privateCA: true` is a different secret for a different job, and the names are close enough to burn an afternoon:
+
+| Value                  | Secret              | Key                 | Mounted at                     | What it is for                                                      |
+| ---------------------- | ------------------- | ------------------- | ------------------------------ | ------------------------------------------------------------------- |
+| `additionalTrustedCAs` | `tls-ca-additional` | `ca-additional.pem` | `/etc/pki/trust/anchors/`      | CAs Rancher itself must trust on outbound TLS - auth servers        |
+| `privateCA`            | `tls-ca`            | `cacerts.pem`       | `/etc/rancher/ssl/cacerts.pem` | the chain Rancher *serves to agents* so they trust its ingress cert |
+
+`privateCA` does nothing for auth. If your Rancher ingress certificate and your Keycloak certificate come from the same internal CA you will want both, for the two different reasons.
+
+### mTLS, if you actually want it
+
+Setting `certificate` and `privateKey` together on an OIDC config is the supported way to present a client certificate to the provider. `privateKey` is a migrated field like the client secret, so it gets its own reference:
+
+```yaml
+privateKey: cattle-global-data:keycloakoidcconfig-privatekey
+```
+
+with the Secret keyed `privatekey`. `hack/check-auth-secret-refs.py` already knows about this field, so it is checked the same way if you add it.
+
 ## Checking the names before you ship
 
 A typo in a secret name or a data key does not fail the deploy. It fails the first login attempt, in an air gap, with `invalid_request` in the Rancher log and nothing else to go on. `hack/check-auth-secret-refs.py` asserts the three things `ReadFromSecret` needs, offline, across all three packages:
