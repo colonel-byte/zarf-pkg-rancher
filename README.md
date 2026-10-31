@@ -4,24 +4,28 @@ Rancher 2.15.2 as Zarf packages, for a cluster with no route to the internet.
 
 Start with [`docs/using-this-repo.md`](docs/using-this-repo.md) for the end-to-end path; this page is the reference.
 
-Two packages deploy something: Rancher itself, and a pull-only route to the registry `zarf init` leaves behind. Seven more carry the images Rancher pulls *later* - when it provisions a downstream cluster, or when somebody enables the monitoring chart - and deploy nothing at all. They are separate packages because their lifecycles are separate: the mirrored sets churn with the Kubernetes versions you provision, while `app-rancher` churns with the chart. Welding them together means re-shipping 12 GB to pick up a Rancher patch release.
+Five packages deploy something: Rancher itself, a pull-only route to the registry `zarf init` leaves behind, and one per auth provider. Seven more carry the images Rancher pulls *later* - when it provisions a downstream cluster, or when somebody enables the monitoring chart - and deploy nothing at all. They are separate packages because their lifecycles are separate: the mirrored sets churn with the Kubernetes versions you provision, while `app-rancher` churns with the chart. Welding them together means re-shipping 12 GB to pick up a Rancher patch release.
 
 One directory per package:
 
-| Directory                       | Images | What it carries                                             |
-| ------------------------------- | ------ | ----------------------------------------------------------- |
-| `app-rancher/`                  | 6      | the chart, and the images Rancher itself runs               |
-| `app-registry/`                 | 1      | a pull-only external route to the Zarf registry (3 flavors) |
-| `mirror-rancher-provisioning/`  | 53     | node agents, RKE2/K3s runtime, upgrade controllers, CAPI    |
-| `mirror-rancher-cni/`           | 34     | Calico, Cilium, multus, whereabouts, flannel                |
-| `mirror-rancher-longhorn/`      | 26     | Longhorn and its CSI sidecars                               |
-| `mirror-rancher-observability/` | 22     | the monitoring and logging charts                           |
-| `mirror-rancher-cloudprovider/` | 13     | AKS/EKS/GKE operators, vSphere, Harvester, kube-vip         |
-| `mirror-rancher-security/`      | 11     | NeuVector, CIS scans, compliance operator                   |
-| `mirror-rancher-support/`       | 9      | backup-restore, SCC, supportability-review, Elemental       |
-| `hack/split-images.py`          | -      | generates all seven `mirror-*` packages                     |
-| `schema/`                       | -      | the `PackagePrerequisites` schema, one copy shared by all   |
-| `docs/`                         | -      | the end-to-end guide                                        |
+| Directory                           | Images | What it carries                                             |
+| ----------------------------------- | ------ | ----------------------------------------------------------- |
+| `app-rancher/`                      | 6      | the chart, and the images Rancher itself runs               |
+| `app-registry/`                     | 1      | a pull-only external route to the Zarf registry (3 flavors) |
+| `app-rancher-auth-keycloak/`        | -      | Keycloak OIDC as a Rancher auth provider                    |
+| `app-rancher-auth-openldap/`        | -      | OpenLDAP as a Rancher auth provider                         |
+| `app-rancher-auth-activedirectory/` | -      | Active Directory as a Rancher auth provider                 |
+| `mirror-rancher-provisioning/`      | 53     | node agents, RKE2/K3s runtime, upgrade controllers, CAPI    |
+| `mirror-rancher-cni/`               | 34     | Calico, Cilium, multus, whereabouts, flannel                |
+| `mirror-rancher-longhorn/`          | 26     | Longhorn and its CSI sidecars                               |
+| `mirror-rancher-observability/`     | 22     | the monitoring and logging charts                           |
+| `mirror-rancher-cloudprovider/`     | 13     | AKS/EKS/GKE operators, vSphere, Harvester, kube-vip         |
+| `mirror-rancher-security/`          | 11     | NeuVector, CIS scans, compliance operator                   |
+| `mirror-rancher-support/`           | 9      | backup-restore, SCC, supportability-review, Elemental       |
+| `hack/split-images.py`              | -      | generates all seven `mirror-*` packages                     |
+| `hack/check-auth-secret-refs.py`    | -      | checks the auth packages' secret references, offline        |
+| `schema/`                           | -      | the `PackagePrerequisites` schema, one copy shared by all   |
+| `docs/`                             | -      | the end-to-end guide                                        |
 
 Every package's `documentation.schema` points at `../schema/`, so the schema lives once and is still packaged into each tarball: Zarf resolves a documentation path that climbs out of the package directory, and `zarf package inspect documentation` extracts the document and its schema side by side. The `$schema` line inside each `docs/prerequisites.yaml` is `../../schema/...` - that one is for the editor you write the file in, and does not resolve against the flat extracted copy.
 
@@ -35,7 +39,7 @@ zarf package create mirror-rancher-provisioning --confirm
 
 These are not small. `mirror-rancher-support` is the lightest at 9 images and builds to **811 MB**; budget accordingly before pulling all 178.
 
-Only `app-rancher` and `app-registry` are hand-written. The seven `mirror-*` packages are generated whole. Either way a new Rancher release is one command:
+Only `app-rancher`, `app-registry` and the three `app-rancher-auth-*` packages are hand-written. The seven `mirror-*` packages are generated whole. Either way a new Rancher release is one command:
 
 ```bash
 ./hack/split-images.py 2.15.3
@@ -52,6 +56,17 @@ zarf package deploy zarf-package-app-rancher-amd64-2.15.2.tar.zst
 Before that, the cluster needs a `tls-rancher-ingress` secret in `cattle-system` (and `tls-ca` if you set `privateCA`), because this package uses `ingress.tls.source=secret` - which is what keeps cert-manager out of the air gap entirely. It also needs an ingress controller, and a Kubernetes version **below 1.37.0**, which is what the chart's own `kubeVersion: < 1.37.0-0` enforces.
 
 `RANCHER_HOSTNAME` and `RANCHER_INGRESS_CLASS` are prompted at deploy time.
+
+## Auth providers
+
+Three more packages configure Rancher's auth providers declaratively, one per provider, so LDAP and OIDC stop being a thing somebody clicks through after every rebuild:
+
+```bash
+zarf package deploy zarf-package-app-rancher-auth-keycloak-amd64-1.0.0.tar.zst \
+  --set OIDC_CLIENT_SECRET=<secret>
+```
+
+The field that makes this look impossible - `AuthConfig` has no `secretKeyRef`, so `clientSecret` and `serviceAccountPassword` read like they have to be plaintext in git - has an undocumented reference form that Rancher itself writes: `cattle-global-data:<derived secret name>`. [`docs/rancher-auth-secret-references.md`](docs/rancher-auth-secret-references.md) is why that works, what the derived names are, and the four gotchas worth knowing before you ship it. Each package's `secret` component is optional, so the Secret can come from SOPS, sealed-secrets or Ansible instead with no change to the AuthConfig.
 
 ## Mirror the rest
 

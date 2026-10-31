@@ -1,0 +1,47 @@
+---
+apiVersion: management.cattle.io/v3
+kind: AuthConfig
+metadata:
+  name: activedirectory
+  annotations:
+    # See the note in keycloakoidc.yaml: flipping enabled to false while this says
+    # `unlocked` resets the config and cleans up this provider's users and tokens.
+    management.cattle.io/auth-provider-cleanup: unlocked
+type: activeDirectoryConfig
+enabled: true
+
+# Rancher's own secret-reference form. ReadFromSecret reads the
+# `serviceaccountpassword` key out of this Secret; the plaintext is never in this file.
+serviceAccountPassword: cattle-global-data:activedirectoryconfig-serviceaccountpassword
+serviceAccountUsername: "###ZARF_VAR_AD_SERVICE_ACCOUNT_USERNAME###"
+
+# shortcut: one server, because a Zarf variable substitutes a string and not a YAML list.
+# Add entries here by hand for more than one domain controller.
+servers:
+  - "###ZARF_VAR_AD_SERVERS###"
+port: ###ZARF_VAR_AD_PORT###
+tls: ###ZARF_VAR_AD_TLS###
+connectionTimeout: 5000
+
+userSearchBase: "###ZARF_VAR_AD_USER_SEARCH_BASE###"
+groupSearchBase: "###ZARF_VAR_AD_GROUP_SEARCH_BASE###"
+defaultLoginDomain: "###ZARF_VAR_AD_DEFAULT_LOGIN_DOMAIN###"
+
+# Rancher's Active Directory defaults, as literals. userAccountControl plus the
+# bitmask of 2 is how AD marks an account disabled.
+userObjectClass: person
+userLoginAttribute: sAMAccountName
+userNameAttribute: name
+userSearchAttribute: "sAMAccountName|sn|givenName"
+userEnabledAttribute: userAccountControl
+disabledStatusBitmask: 2
+groupObjectClass: group
+groupNameAttribute: name
+groupSearchAttribute: sAMAccountName
+groupDNAttribute: distinguishedName
+groupMemberUserAttribute: distinguishedName
+groupMemberMappingAttribute: member
+nestedGroupMembershipEnabled: false
+
+accessMode: unrestricted
+allowedPrincipalIds: []

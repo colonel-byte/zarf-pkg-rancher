@@ -1,0 +1,48 @@
+---
+apiVersion: management.cattle.io/v3
+kind: AuthConfig
+metadata:
+  name: openldap
+  annotations:
+    # See the note in keycloakoidc.yaml: flipping enabled to false while this says
+    # `unlocked` resets the config and cleans up this provider's users and tokens.
+    management.cattle.io/auth-provider-cleanup: unlocked
+type: openLdapConfig
+enabled: true
+
+# Rancher's own secret-reference form. ReadFromSecret reads the
+# `serviceaccountpassword` key out of this Secret; the plaintext is never in this file.
+serviceAccountPassword: cattle-global-data:openldapconfig-serviceaccountpassword
+serviceAccountDistinguishedName: "###ZARF_VAR_LDAP_SERVICE_ACCOUNT_DN###"
+
+# shortcut: one server, because a Zarf variable substitutes a string and not a YAML list.
+# Add entries here by hand for a redundant directory.
+servers:
+  - "###ZARF_VAR_LDAP_SERVERS###"
+port: ###ZARF_VAR_LDAP_PORT###
+tls: ###ZARF_VAR_LDAP_TLS###
+starttls: false
+connectionTimeout: 5000
+
+userSearchBase: "###ZARF_VAR_LDAP_USER_SEARCH_BASE###"
+groupSearchBase: "###ZARF_VAR_LDAP_GROUP_SEARCH_BASE###"
+
+# Rancher's OpenLDAP defaults, as literals. Edit here for a schema that differs;
+# templating all of them would be a lot of variables nobody sets.
+userObjectClass: inetOrgPerson
+userLoginAttribute: uid
+userNameAttribute: cn
+userMemberAttribute: memberOf
+userSearchAttribute: "uid|sn|givenName"
+userEnabledAttribute: ""
+disabledStatusBitmask: 0
+groupObjectClass: groupOfNames
+groupNameAttribute: cn
+groupSearchAttribute: cn
+groupDNAttribute: entryDN
+groupMemberUserAttribute: entryDN
+groupMemberMappingAttribute: member
+nestedGroupMembershipEnabled: false
+
+accessMode: unrestricted
+allowedPrincipalIds: []

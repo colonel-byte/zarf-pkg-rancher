@@ -1,0 +1,25 @@
+# yaml-language-server: $schema=../../schema/zarf-v1alpha1-package-prerequisites-schema.json
+---
+apiVersion: colonel-byte.dev/v1alpha1
+kind: PackagePrerequisites
+metadata:
+  package: app-rancher-auth-openldap
+  version: 1.0.0
+  description: >
+    Configures OpenLDAP as a Rancher auth provider, so it needs Rancher itself: the AuthConfig
+    CRD it writes to and the cattle-global-data namespace it puts the Secret in both come
+    from the Rancher server. What it cannot state is the LDAP directory on the other
+    end, which is off-cluster and so outside anything requires can express. Check that by
+    hand.
+
+requires:
+  packages:
+    # Rancher. app-rancher reports itself under this name in `zarf package list`.
+    - name: app-rancher
+    # Rancher's own prerequisite, repeated because requirements do not transit.
+    - name: init
+
+provides:
+  capabilities:
+    - name: rancher-auth-openldap
+      version: "1.0.0"

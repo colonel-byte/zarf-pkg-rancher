@@ -1,6 +1,6 @@
 # Using this repo
 
-Rancher 2.15.2 for an air-gapped cluster, as ten Zarf packages. This is the end-to-end path; each package's own `README.md` has the detail.
+Rancher 2.15.2 for an air-gapped cluster, as thirteen Zarf packages. This is the end-to-end path; each package's own `README.md` has the detail.
 
 ## What is here, and why it is split
 
@@ -26,7 +26,7 @@ Welding them into one package means re-shipping 12 GB to pick up a Rancher patch
 | `mirror-rancher-support`       | 9      | 811M       | no                  |
 | `mirror-rancher-cloudprovider` | 13     | 437M       | no                  |
 
-Those sizes are measured, not estimated. The whole set is 12 GB.
+Those sizes are measured, not estimated. The whole set is 12 GB. The three `app-rancher-auth-*` packages are manifests only - a few kilobytes each - and are covered under [Auth providers](#auth-providers) below rather than in this table.
 
 ## The decision you make first
 
@@ -41,16 +41,17 @@ Whether this Rancher provisions **other** clusters. It changes what you carry an
 ```bash
 zarf package create app-rancher --confirm
 zarf package create app-registry -f nginx --confirm
+zarf package create app-rancher-auth-keycloak --confirm
 zarf package create mirror-rancher-provisioning --confirm
 ```
 
-Only `app-rancher` and `app-registry` are hand-written. The seven `mirror-*` packages are generated:
+Only `app-rancher`, `app-registry` and the three `app-rancher-auth-*` packages are hand-written. The seven `mirror-*` packages are generated:
 
 ```bash
 ./hack/split-images.py 2.15.3
 ```
 
-That fetches the release's `rancher-images.txt`, partitions all 178 images across eight groups, rewrites every generated `zarf.yaml`, `docs/prerequisites.yaml` and `README.md`, and syncs `app-rancher`'s version strings and image tags in place. **An image matching no group exits non-zero** rather than landing in a catch-all, which is how a chart added upstream announces itself. The group table at the top of the script is the only part a human maintains.
+That fetches the release's `rancher-images.txt`, partitions all 178 images across eight groups, rewrites every generated `zarf.yaml`, `docs/prerequisites.yaml` and `README.md`, and syncs `app-rancher`'s version strings and image tags in place. It does not touch the `app-rancher-auth-*` packages: they carry no images and no Rancher version, so they version on their own. **An image matching no group exits non-zero** rather than landing in a catch-all, which is how a chart added upstream announces itself. The group table at the top of the script is the only part a human maintains.
 
 Tested across the three real 2.15.x releases: no unmatched images on any of them, and re-running at the starting version returns the tree byte-identical.
 
@@ -84,6 +85,28 @@ zarf package deploy zarf-package-app-rancher-amd64-2.15.2.tar.zst
 
 Rancher needs a `tls-rancher-ingress` secret in `cattle-system` first. This repo sets `ingress.tls.source=secret`, which keeps cert-manager out of the air gap entirely - the chart only renders a cert-manager `Issuer` when the source is `rancher` or `letsEncrypt`. It also needs a Kubernetes version **below 1.37.0**, which the chart's own `kubeVersion: < 1.37.0-0` enforces.
 
+## Auth providers
+
+Rancher's auth config is a thing somebody clicks through after every rebuild unless you ship it. Three packages ship it, one per provider, because an auth provider's lifecycle has nothing to do with the other two:
+
+```bash
+zarf package create app-rancher-auth-keycloak --confirm
+zarf package deploy zarf-package-app-rancher-auth-keycloak-amd64-1.0.0.tar.zst \
+  --set OIDC_CLIENT_SECRET=<the secret from Keycloak>
+```
+
+The field that makes this look impossible is the password. `AuthConfig` has no `secretKeyRef`: Keycloak OIDC's `clientSecret` and LDAP's `serviceAccountPassword` are plain strings, which reads like the plaintext has to be committed. It does not - Rancher has an undocumented reference form that it writes itself, `cattle-global-data:<derived secret name>`, and these packages write it:
+
+```yaml
+clientSecret: cattle-global-data:keycloakoidcconfig-clientsecret
+```
+
+Because that is the state Rancher's own secretmigrator converges on, the committed object is also the object on the cluster: nothing rewrites the field, so there is no drift for Zarf or Flux to fight. Committing an inline password instead means Rancher rewrites it on every reconcile and your GitOps controller writes it back, forever.
+
+Each package has two components. `authconfig` is required; `secret` is not, and deselecting it is how a Secret from SOPS, sealed-secrets, External Secrets or Ansible gets used instead - the AuthConfig is byte-identical either way, because the reference it carries is a constant rather than a variable.
+
+[`docs/rancher-auth-secret-references.md`](rancher-auth-secret-references.md) is the whole story: where the names come from, why the OIDC Secret must hold exactly one key, and why `enabled: false` in git deletes users rather than disabling a provider. Before building, `./hack/check-auth-secret-refs.py` asserts offline that every reference resolves - worth running, because a typo here does not fail the deploy, it fails the first login attempt in an air gap.
+
 ## Mirror the rest, and expose it
 
 ```bash
@@ -111,12 +134,14 @@ Then set Rancher's `systemDefaultRegistry` to the `app-registry` hostname, and d
 ## Layout
 
 ```
-app-rancher/            the chart, hand-written
-app-registry/           the pull-only registry route, hand-written, three flavors
-mirror-rancher-*/       seven generated image-only packages
-hack/split-images.py    generates them
-schema/                 the PackagePrerequisites schema, one copy shared by all
-docs/                   this guide
+app-rancher/                      the chart, hand-written
+app-registry/                     the pull-only registry route, hand-written, three flavors
+app-rancher-auth-*/               three hand-written auth providers, manifests only
+mirror-rancher-*/                 seven generated image-only packages
+hack/split-images.py              generates them
+hack/check-auth-secret-refs.py    checks the auth packages' secret references, offline
+schema/                           the PackagePrerequisites schema, one copy shared by all
+docs/                             this guide, and the auth secret-reference guide
 ```
 
 Each package's `documentation.schema` points at `../schema/`, so the schema lives once and still ships inside every tarball: Zarf resolves a documentation path that climbs out of the package directory, and `zarf package inspect documentation` extracts the document and its schema side by side.

@@ -1,0 +1,38 @@
+---
+apiVersion: management.cattle.io/v3
+kind: AuthConfig
+metadata:
+  name: keycloakoidc
+  annotations:
+    # Pre-set so the mgmt-auth-config-controller does not write it and cause drift.
+    # Setting enabled: false while this says `unlocked` makes Rancher reset the config
+    # and clean up this provider's users and tokens. Change it to `user-locked` first.
+    management.cattle.io/auth-provider-cleanup: unlocked
+type: keyCloakOIDCConfig
+enabled: true
+
+# Rancher's own secret-reference form, and the only reason this file can live in git.
+# ReadFromSecret sees the cattle-global-data prefix, splits on the colon, and reads the
+# `clientsecret` key out of that Secret. It is also the state the secretmigrator converges
+# on, so no controller rewrites this field and there is nothing for GitOps to fight.
+clientSecret: cattle-global-data:keycloakoidcconfig-clientsecret
+
+clientId: "###ZARF_VAR_OIDC_CLIENT_ID###"
+issuer: "###ZARF_VAR_OIDC_ISSUER###"
+rancherUrl: "https://###ZARF_VAR_RANCHER_HOSTNAME###/verify-auth"
+
+# Keycloak's standard endpoint layout under the realm issuer.
+authEndpoint: "###ZARF_VAR_OIDC_ISSUER###/protocol/openid-connect/auth"
+tokenEndpoint: "###ZARF_VAR_OIDC_ISSUER###/protocol/openid-connect/token"
+userInfoEndpoint: "###ZARF_VAR_OIDC_ISSUER###/protocol/openid-connect/userinfo"
+jwksUrl: "###ZARF_VAR_OIDC_ISSUER###/protocol/openid-connect/certs"
+endSessionEndpoint: "###ZARF_VAR_OIDC_ISSUER###/protocol/openid-connect/logout"
+
+scope: "openid profile email"
+groupSearchEnabled: true
+groupsClaim: groups
+
+# accessMode gates login via userMGR.CheckAccess. `restricted` needs
+# allowedPrincipalIds entries such as keycloakoidc_group://platform-admins.
+accessMode: unrestricted
+allowedPrincipalIds: []

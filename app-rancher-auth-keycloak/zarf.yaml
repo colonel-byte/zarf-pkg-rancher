@@ -1,0 +1,48 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/zarf-dev/zarf/main/zarf.schema.json
+kind: ZarfPackageConfig
+metadata:
+  name: app-rancher-auth-keycloak
+  description: "Keycloak OIDC auth for Rancher, with no plaintext client secret in the manifest"
+  version: "1.0.0"
+
+documentation:
+  prerequisites: docs/prerequisites.yaml
+  schema: ../schema/zarf-v1alpha1-package-prerequisites-schema.json
+
+variables:
+  - name: RANCHER_HOSTNAME
+    description: FQDN the Rancher ingress answers on, used to build rancherUrl
+    prompt: true
+  - name: OIDC_ISSUER
+    description: "Realm issuer URL, e.g. https://keycloak.example.com/realms/example"
+    prompt: true
+  - name: OIDC_CLIENT_ID
+    description: The Keycloak client ID
+    default: rancher
+  # prompt: false because Zarf prompts per package and not per selected component, and
+  # the `secret` component is optional: prompting would demand a password that an
+  # out-of-band deploy does not need. Pass it with --set.
+  - name: OIDC_CLIENT_SECRET
+    description: "secret component only: the Keycloak client secret"
+    default: ""
+    sensitive: true
+
+components:
+  # The Secret is declared first so it exists before the AuthConfig that references it,
+  # and is optional: deselecting it is how an out-of-band Secret works. The AuthConfig is
+  # byte-identical either way, because the reference it carries is a constant.
+  - name: secret
+    required: false
+    description: "The clientSecret for keycloakoidc, in the Secret Rancher reads it from"
+    manifests:
+      - name: keycloakoidc-secret
+        files:
+          - manifests/secret.yaml
+
+  - name: authconfig
+    required: true
+    description: "The keycloakoidc AuthConfig, enabled, referencing the Secret above"
+    manifests:
+      - name: keycloakoidc
+        files:
+          - manifests/authconfig.yaml
