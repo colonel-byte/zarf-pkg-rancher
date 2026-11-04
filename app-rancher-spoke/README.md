@@ -49,6 +49,39 @@ zarf package deploy zarf-package-app-rancher-spoke-amd64-2.15.2.tar.zst \
 
 Per spoke, you can also override the hub's global registry: set `spec.importedConfig.privateRegistryURL` (and `privateRegistryPullSecrets`) on the cluster. A cluster-level registry wins over `systemDefaultRegistry`, and it reaches the agent, the downstream charts and Fleet alike - so one spoke can pull from a registry nothing else in the fleet can see.
 
+## Pod security on the spoke
+
+Two different questions, and Rancher answers only one of them.
+
+**Which PSA level the spoke enforces.** Rancher has `PodSecurityAdmissionConfigurationTemplate` and `cluster.spec.defaultPodSecurityAdmissionConfigurationTemplateName`, and what consumes them renders the API server's `PodSecurity` admission plugin configuration. Rancher can only write that file on a cluster it provisions. This cluster it did not provision, so the fleet-wide default belongs in the spoke's own `kube-apiserver` admission config, not in a template on the hub. Per-namespace labels, on the other hand, work on an imported cluster like any other, and Rancher gates them: changing `pod-security.kubernetes.io/enforce`, `/audit` or `/warn` needs its `updatepsa` verb. For the namespaces the cluster agent creates here, Rancher stamps the labels and annotations it is configured with at creation time, which is the one place an exemption survives the namespace being recreated.
+
+**Whether Rancher's own workloads can be made `restricted`-compliant.** They cannot, and nothing here is a configuration mistake you can fix:
+
+| Workload               | What its pod spec says                                                               | `baseline` | `restricted`                                    |
+| ---------------------- | ------------------------------------------------------------------------------------ | ---------- | ----------------------------------------------- |
+| `cattle-cluster-agent` | no `securityContext` at all                                                          | passes     | fails: no `runAsNonRoot`, no seccomp, caps kept |
+| `rancher-webhook`      | `allowPrivilegeEscalation: false` and `readOnlyRootFilesystem: true`, both hardcoded | passes     | fails: the same three                           |
+| `fleet-agent`          | `runAsNonRoot`, uid 1000, `drop: ALL`, `privileged: false`                           | passes     | fails on `seccompProfile`, and on nothing else  |
+| SUC controller         | `runAsNonRoot` 65534 **and** a seccomp profile, but three `hostPath` volumes         | **fails**  | fails                                           |
+| SUC upgrade jobs       | privileged, with host mounts - that is the job                                       | fails      | fails                                           |
+
+The customization APIs are about scheduling, not security: `clusterAgentDeploymentCustomization` and `fleetAgentDeploymentCustomization` carry tolerations, affinity, resources, a pod disruption budget and a priority class, and `webhookDeploymentCustomization` maps to exactly `replicaCount`, `tolerations`, `affinity`, `resources` and `podDisruptionBudget`. The `rancher-config` ConfigMap in this cluster's `cattle-system`, keyed by chart name, does merge arbitrary values at the highest precedence - but only values the chart defines, and neither chart defines a `securityContext`. The fleet chart's `disableSecurityContext` only loosens. There is no knob.
+
+So the posture that works is `restricted` as this cluster's default with `cattle-system` and `cattle-fleet-system` exempted to `privileged`, by label. **Those two labels are load-bearing**: tighten them later, by hand or through a policy engine, and `cattle-cluster-agent` stops scheduling, which surfaces on the hub as a cluster that went unavailable for no visible reason. Without the version-management components below, nothing this package carries needs more than `baseline`.
+
+## Keeping the system-upgrade-controller off this cluster
+
+Worth doing if you upgrade this cluster by its own means, because SUC is the only thing here that cannot run under `baseline`.
+
+Downstream, whether the SUC chart is installed depends only on the `managed-system-upgrade-controller` feature as *this* cluster's agent sees it, and the chart is actively uninstalled once no Rancher-managed plans remain. So turning it off removes an existing install rather than merely preventing a new one. Two places to turn it off:
+
+| Scope       | Where                                                                           | Note                                                |
+| ----------- | ------------------------------------------------------------------------------- | --------------------------------------------------- |
+| This spoke  | `rancher.io/imported-cluster-version-management: "false"`, a cluster annotation | takes precedence over the setting below             |
+| Every spoke | the `imported-cluster-version-management` setting, set to `false`               | **defaults to `true`** - imported RKE2/K3s gets SUC |
+
+Only imported RKE2/K3s clusters are affected; on any other distro Rancher never installs SUC in the first place. With version management off, deselect `version-management` and the `k8s-1-3*` components: that is 8 of this package's 12 images, and the `hostPath` requirement with them.
+
 ## Variables
 
 | Variable             | Component  | Meaning                                                                            |

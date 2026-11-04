@@ -97,7 +97,7 @@ zarf package deploy zarf-package-app-rancher-spoke-amd64-2.15.2.tar.zst \
   --set RANCHER_IMPORT_URL=https://rancher.example.com/v3/import/<token>_<cluster>.yaml
 ```
 
-The URL is the one the hub's **Import Existing** screen hands out; it carries a cluster token, so treat it as a secret. The host running that command needs `curl` and a route to the hub's ingress, nothing else - `kubectl` comes from the Zarf binary.
+The URL is the one the hub's **Import Existing** screen hands out; it carries a cluster token, so treat it as a secret. If the spoke enforces Pod Security Admission, read that package's README first: Rancher's own downstream workloads cannot be made `restricted`-compliant, and two namespace exemptions are what keep the join working. The host running that command needs `curl` and a route to the hub's ingress, nothing else - `kubectl` comes from the Zarf binary.
 
 ## Auth providers
 
