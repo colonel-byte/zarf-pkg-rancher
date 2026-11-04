@@ -4,28 +4,29 @@ Rancher 2.15.2 as Zarf packages, for a cluster with no route to the internet.
 
 Start with [`docs/using-this-repo.md`](docs/using-this-repo.md) for the end-to-end path; this page is the reference.
 
-Five packages deploy something: Rancher itself, a pull-only route to the registry `zarf init` leaves behind, and one per auth provider. Seven more carry the images Rancher pulls *later* - when it provisions a downstream cluster, or when somebody enables the monitoring chart - and deploy nothing at all. They are separate packages because their lifecycles are separate: the mirrored sets churn with the Kubernetes versions you provision, while `app-rancher` churns with the chart. Welding them together means re-shipping 12 GB to pick up a Rancher patch release.
+Six packages deploy something: Rancher itself, a pull-only route to the registry `zarf init` leaves behind, one per auth provider, and one that joins a downstream cluster to the hub. Seven more carry the images Rancher pulls *later* - when it provisions a downstream cluster, or when somebody enables the monitoring chart - and deploy nothing at all. They are separate packages because their lifecycles are separate: the mirrored sets churn with the Kubernetes versions you provision, while `app-rancher` churns with the chart. Welding them together means re-shipping 12 GB to pick up a Rancher patch release.
 
 One directory per package:
 
-| Directory                           | Images | What it carries                                             |
-| ----------------------------------- | ------ | ----------------------------------------------------------- |
-| `app-rancher/`                      | 6      | the chart, and the images Rancher itself runs               |
-| `app-registry/`                     | 1      | a pull-only external route to the Zarf registry (3 flavors) |
-| `app-rancher-auth-keycloak/`        | -      | Keycloak OIDC as a Rancher auth provider                    |
-| `app-rancher-auth-openldap/`        | -      | OpenLDAP as a Rancher auth provider                         |
-| `app-rancher-auth-activedirectory/` | -      | Active Directory as a Rancher auth provider                 |
-| `mirror-rancher-provisioning/`      | 53     | node agents, RKE2/K3s runtime, upgrade controllers, CAPI    |
-| `mirror-rancher-cni/`               | 34     | Calico, Cilium, multus, whereabouts, flannel                |
-| `mirror-rancher-longhorn/`          | 26     | Longhorn and its CSI sidecars                               |
-| `mirror-rancher-observability/`     | 22     | the monitoring and logging charts                           |
-| `mirror-rancher-cloudprovider/`     | 13     | AKS/EKS/GKE operators, vSphere, Harvester, kube-vip         |
-| `mirror-rancher-security/`          | 11     | NeuVector, CIS scans, compliance operator                   |
-| `mirror-rancher-support/`           | 9      | backup-restore, SCC, supportability-review, Elemental       |
-| `hack/split-images.py`              | -      | generates all seven `mirror-*` packages                     |
-| `hack/check-auth-secret-refs.py`    | -      | checks the auth packages' secret references, offline        |
-| `schema/`                           | -      | the `PackagePrerequisites` schema, one copy shared by all   |
-| `docs/`                             | -      | the end-to-end guide                                        |
+| Directory                           | Images | What it carries                                                      |
+| ----------------------------------- | ------ | -------------------------------------------------------------------- |
+| `app-rancher/`                      | 6      | the chart, and the images Rancher itself runs                        |
+| `app-registry/`                     | 1      | a pull-only external route to the Zarf registry (3 flavors)          |
+| `app-rancher-auth-keycloak/`        | -      | Keycloak OIDC as a Rancher auth provider                             |
+| `app-rancher-auth-openldap/`        | -      | OpenLDAP as a Rancher auth provider                                  |
+| `app-rancher-auth-activedirectory/` | -      | Active Directory as a Rancher auth provider                          |
+| `app-rancher-spoke/`                | 12     | joins an existing cluster to the hub, and the images it then pulls   |
+| `mirror-rancher-provisioning/`      | 53     | node agents, RKE2/K3s runtime, upgrade controllers, CAPI             |
+| `mirror-rancher-cni/`               | 34     | Calico, Cilium, multus, whereabouts, flannel                         |
+| `mirror-rancher-longhorn/`          | 26     | Longhorn and its CSI sidecars                                        |
+| `mirror-rancher-observability/`     | 22     | the monitoring and logging charts                                    |
+| `mirror-rancher-cloudprovider/`     | 13     | AKS/EKS/GKE operators, vSphere, Harvester, kube-vip                  |
+| `mirror-rancher-security/`          | 11     | NeuVector, CIS scans, compliance operator                            |
+| `mirror-rancher-support/`           | 9      | backup-restore, SCC, supportability-review, Elemental                |
+| `hack/split-images.py`              | -      | generates all seven `mirror-*` packages, retags the hand-written two |
+| `hack/check-auth-secret-refs.py`    | -      | checks the auth packages' secret references, offline                 |
+| `schema/`                           | -      | the `PackagePrerequisites` schema, one copy shared by all            |
+| `docs/`                             | -      | the end-to-end guide                                                 |
 
 Every package's `documentation.schema` points at `../schema/`, so the schema lives once and is still packaged into each tarball: Zarf resolves a documentation path that climbs out of the package directory, and `zarf package inspect documentation` extracts the document and its schema side by side. The `$schema` line inside each `docs/prerequisites.yaml` is `../../schema/...` - that one is for the editor you write the file in, and does not resolve against the flat extracted copy.
 
@@ -34,18 +35,19 @@ Every package's `documentation.schema` points at `../schema/`, so the schema liv
 ```bash
 zarf package create app-rancher --confirm
 zarf package create app-registry -f nginx --confirm
+zarf package create app-rancher-spoke --confirm
 zarf package create mirror-rancher-provisioning --confirm
 ```
 
 These are not small. `mirror-rancher-support` is the lightest at 9 images and builds to **811 MB**; budget accordingly before pulling all 178.
 
-Only `app-rancher`, `app-registry` and the three `app-rancher-auth-*` packages are hand-written. The seven `mirror-*` packages are generated whole. Either way a new Rancher release is one command:
+Only `app-rancher`, `app-rancher-spoke`, `app-registry` and the three `app-rancher-auth-*` packages are hand-written. The seven `mirror-*` packages are generated whole. Either way a new Rancher release is one command:
 
 ```bash
 ./hack/split-images.py 2.15.3
 ```
 
-It fetches that release's `rancher-images.txt`, partitions it across the eight groups, rewrites each generated `zarf.yaml`, `docs/prerequisites.yaml` and `README.md`, and syncs `app-rancher`'s version strings and image tags in place rather than leaving the hand-written package behind at the old release. It prints every tag it moved. A version string whose line stopped matching is a hard failure too, not a silent no-op. **An image matching no group makes it exit non-zero** rather than fall into a catch-all - that is how a chart added in the next release announces itself, instead of silently landing in whichever package sorted first. The group table at the top of the script is the only part a human maintains.
+It fetches that release's `rancher-images.txt`, partitions it across the eight groups, rewrites each generated `zarf.yaml`, `docs/prerequisites.yaml` and `README.md`, and syncs `app-rancher`'s and `app-rancher-spoke`'s version strings and image tags in place rather than leaving the hand-written packages behind at the old release. The spoke is not a group - it carries images the groups own, and a group for it would steal them - so it is synced against the whole list, and a repo with several tags in one release (`kuberlr-kubectl`, the per-minor upgrade images) is resolved by Kubernetes minor and otherwise handed back to a human. It prints every tag it moved. A version string whose line stopped matching is a hard failure too, not a silent no-op. **An image matching no group makes it exit non-zero** rather than fall into a catch-all - that is how a chart added in the next release announces itself, instead of silently landing in whichever package sorted first. The group table at the top of the script is the only part a human maintains.
 
 ## Deploy
 

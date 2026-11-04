@@ -1,16 +1,17 @@
 # Using this repo
 
-Rancher 2.15.2 for an air-gapped cluster, as thirteen Zarf packages. This is the end-to-end path; each package's own `README.md` has the detail.
+Rancher 2.15.2 for an air-gapped cluster, as fourteen Zarf packages. This is the end-to-end path; each package's own `README.md` has the detail.
 
 ## What is here, and why it is split
 
 Rancher pulls images at three different times, and they belong in different packages because they have different lifecycles.
 
-| When                              | What pulls                               | Package                                             |
-| --------------------------------- | ---------------------------------------- | --------------------------------------------------- |
-| At install                        | the Rancher server, webhook, Fleet       | `app-rancher`                                       |
-| When somebody enables a chart     | monitoring, logging, Longhorn, NeuVector | the matching `mirror-*`                             |
-| When Rancher provisions a cluster | node agents, the RKE2/K3s runtime, CNI   | `mirror-rancher-provisioning`, `mirror-rancher-cni` |
+| When                              | What pulls                                         | Package                                             |
+| --------------------------------- | -------------------------------------------------- | --------------------------------------------------- |
+| At install                        | the Rancher server, webhook, Fleet                 | `app-rancher`                                       |
+| When somebody enables a chart     | monitoring, logging, Longhorn, NeuVector           | the matching `mirror-*`                             |
+| When Rancher provisions a cluster | node agents, the RKE2/K3s runtime, CNI             | `mirror-rancher-provisioning`, `mirror-rancher-cni` |
+| When a cluster joins as a spoke   | the cluster agent, downstream webhook, Fleet agent | `app-rancher-spoke`, deployed on the spoke          |
 
 Welding them into one package means re-shipping 12 GB to pick up a Rancher patch release. Keeping them apart means the mirrored sets move on their own schedule, which they measurably do: between 2.15.0 and 2.15.1, `mirror-rancher-support` went from 5 images to 9 and `mirror-rancher-longhorn` from 31 to 25, with no change to the Rancher chart at all.
 
@@ -18,6 +19,7 @@ Welding them into one package means re-shipping 12 GB to pick up a Rancher patch
 | ------------------------------ | ------ | ---------- | ------------------- |
 | `app-rancher`                  | 6      | 1.2G       | yes                 |
 | `app-registry`                 | 1      | 25M        | yes                 |
+| `app-rancher-spoke`            | 12     | -          | yes                 |
 | `mirror-rancher-provisioning`  | 53     | 3.2G       | no                  |
 | `mirror-rancher-observability` | 22     | 1.9G       | no                  |
 | `mirror-rancher-longhorn`      | 26     | 1.8G       | no                  |
@@ -36,6 +38,8 @@ Whether this Rancher provisions **other** clusters. It changes what you carry an
 
 **Rancher provisioning a fleet.** Downstream kubelets pull from an address they can reach, which Zarf's internal registry is not: it is a NodePort serving plain HTTP that only the management cluster's own kubelets can see. So you also need a way to expose it (`app-registry`) and the mirrored images in it, and `systemDefaultRegistry` set to that address.
 
+**Rancher importing clusters that already exist.** A cluster that was built without Rancher, and that has its own `zarf init`, joins with `app-rancher-spoke` deployed *on it*. Which of the two shapes above the hub is in decides how that spoke resolves images, and the package's own README has the two commands: with `systemDefaultRegistry` empty, the spoke's Zarf agent rewrites what Rancher creates and a plain deploy is enough; with it set, mirror the spoke package into that registry with `--no-img-checksum`, because Rancher asks for tags Zarf's checksum suffix would have changed.
+
 ## Build
 
 ```bash
@@ -45,13 +49,13 @@ zarf package create app-rancher-auth-keycloak --confirm
 zarf package create mirror-rancher-provisioning --confirm
 ```
 
-Only `app-rancher`, `app-registry` and the three `app-rancher-auth-*` packages are hand-written. The seven `mirror-*` packages are generated:
+Only `app-rancher`, `app-rancher-spoke`, `app-registry` and the three `app-rancher-auth-*` packages are hand-written. The seven `mirror-*` packages are generated:
 
 ```bash
 ./hack/split-images.py 2.15.3
 ```
 
-That fetches the release's `rancher-images.txt`, partitions all 178 images across eight groups, rewrites every generated `zarf.yaml`, `docs/prerequisites.yaml` and `README.md`, and syncs `app-rancher`'s version strings and image tags in place. It does not touch the `app-rancher-auth-*` packages: they carry no images and no Rancher version, so they version on their own. **An image matching no group exits non-zero** rather than landing in a catch-all, which is how a chart added upstream announces itself. The group table at the top of the script is the only part a human maintains.
+That fetches the release's `rancher-images.txt`, partitions all 178 images across eight groups, rewrites every generated `zarf.yaml`, `docs/prerequisites.yaml` and `README.md`, and syncs `app-rancher`'s and `app-rancher-spoke`'s version strings and image tags in place. It does not touch the `app-rancher-auth-*` packages: they carry no images and no Rancher version, so they version on their own. **An image matching no group exits non-zero** rather than landing in a catch-all, which is how a chart added upstream announces itself. The group table at the top of the script is the only part a human maintains.
 
 Tested across the three real 2.15.x releases: no unmatched images on any of them, and re-running at the starting version returns the tree byte-identical.
 
@@ -84,6 +88,16 @@ zarf package deploy zarf-package-app-rancher-amd64-2.15.2.tar.zst
 ```
 
 Rancher needs a `tls-rancher-ingress` secret in `cattle-system` first. This repo sets `ingress.tls.source=secret`, which keeps cert-manager out of the air gap entirely - the chart only renders a cert-manager `Issuer` when the source is `rancher` or `letsEncrypt`. It also needs a Kubernetes version **below 1.37.0**, which the chart's own `kubeVersion: < 1.37.0-0` enforces.
+
+On each spoke, after `zarf init` there, one command both mirrors the downstream images and performs the join:
+
+```bash
+zarf package deploy zarf-package-app-rancher-spoke-amd64-2.15.2.tar.zst \
+  --components agent,register \
+  --set RANCHER_IMPORT_URL=https://rancher.example.com/v3/import/<token>_<cluster>.yaml
+```
+
+The URL is the one the hub's **Import Existing** screen hands out; it carries a cluster token, so treat it as a secret. The host running that command needs `curl` and a route to the hub's ingress, nothing else - `kubectl` comes from the Zarf binary.
 
 ## Auth providers
 

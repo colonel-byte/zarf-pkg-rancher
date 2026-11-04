@@ -242,31 +242,63 @@ def sub_once(path, pattern, repl, text):
     return new
 
 
-def sync_app_rancher(version, available):
-    """Retag app-rancher's hand-written files in place.
+def resolve_tag(path, repo, tag, candidates, version):
+    """Pick the tag this repo should carry, out of every tag the release lists for it.
 
-    It is hand-written because of its chart, values and comments, but its version
-    strings and image tags are the same facts the generated packages get from the
-    image list -- left to a human they are what goes stale on a release bump.
+    Most repos have one. The per-minor repos have one per Kubernetes minor, and
+    kuberlr-kubectl has one per chart that uses it, so a plain repo->image map would
+    silently rewrite a 1.34 line to a 1.36 tag. Ambiguity is resolved by minor, then by
+    the tag already there, and otherwise handed back to a human.
+    """
+    if not candidates:
+        sys.exit(f"{path}: {repo} is not in Rancher {version}'s image list")
+    if len(candidates) == 1:
+        return candidates[0]
+    def minor(t):
+        m = MINOR.search(f":{t}")
+        return m.group(1) if m else None
+
+    same = [c for c in candidates if minor(c) and minor(c) == minor(tag)]
+    if len(same) == 1:
+        return same[0]
+    if tag in candidates:
+        return tag
+    sys.exit(
+        f"{path}: {repo} has {len(candidates)} tags in Rancher {version} "
+        f"({', '.join(sorted(candidates))}) and {tag} is not one of them -- pick one by hand"
+    )
+
+
+def sync_handwritten(name, version, images):
+    """Retag a hand-written package's files in place.
+
+    app-rancher and app-rancher-spoke are hand-written because of their charts, values,
+    actions and comments, but their version strings and image tags are the same facts the
+    generated packages get from the image list -- left to a human they are what goes stale
+    on a release bump. They are synced against the whole list rather than one group,
+    because the spoke's images are spread across several groups and belong to none.
     """
     # shortcut: the hand-written READMEs hardcode the version in example tarball
     # names and are not synced; do that here if they start going stale in review.
-    by_repo = {i.split(":")[0]: i for i in available}
-    pkg = ROOT / "app-rancher"
+    by_repo = defaultdict(list)
+    for image in images:
+        repo, tag = image.split(":", 1)
+        by_repo[repo].append(tag)
+    pkg = ROOT / name
     changed = []
 
     zarf = pkg / "zarf.yaml"
     text = zarf.read_text()
-    for repo, tag in re.findall(r"^      - docker\.io/(\S+?):(\S+)$", text, re.M):
-        want = by_repo.get(repo)
-        if want is None:
-            sys.exit(f"{zarf}: {repo} is not in Rancher {version}'s image list")
-        if want != f"{repo}:{tag}":
-            text = text.replace(f"      - docker.io/{repo}:{tag}", f"      - docker.io/{want}")
-            changed.append(f"{repo}:{tag} -> {want.split(':', 1)[1]}")
-    # metadata.version, then the chart version -- the rancher chart is versioned with the app
+    refs = re.findall(r"^      - docker\.io/(\S+?):(\S+)$", text, re.M)
+    for repo, tag in refs:
+        want = resolve_tag(zarf, repo, tag, by_repo[repo], version)
+        if want != tag:
+            text = text.replace(f"      - docker.io/{repo}:{tag}", f"      - docker.io/{repo}:{want}")
+            changed.append(f"{repo}:{tag} -> {want}")
     text = sub_once(zarf, r'^  version: ".*"$', f'  version: "{version}"', text)
-    text = sub_once(zarf, r"^        version: .*$", f"        version: {version}", text)
+    # The rancher chart is versioned with the app, so it moves too. Only app-rancher has one.
+    if "    charts:" in text:
+        text = sub_once(zarf, r"^        version: .*$", f"        version: {version}", text)
     zarf.write_text(text)
 
     prereqs = pkg / "docs" / "prerequisites.yaml"
@@ -275,7 +307,7 @@ def sync_app_rancher(version, available):
     text = sub_once(prereqs, r'^      version: ".*"$', f'      version: "{version}"', text)
     prereqs.write_text(text)
 
-    return changed
+    return changed, len(refs)
 
 
 def main():
@@ -288,15 +320,21 @@ def main():
     assigned = partition(images)
     assert sum(len(v) for v in assigned.values()) == len(images)
 
+    def sync(name, count=None):
+        retagged, carried = sync_handwritten(name, args.version, images)
+        print(f"{count if count is not None else carried:4d}  {name} (hand-written; version and tags synced)")
+        for line in retagged:
+            print(f"        {line}")
+
     for name, desc, _ in GROUPS:
         if name == "app-rancher":
-            retagged = sync_app_rancher(args.version, assigned[name])
-            print(f"{len(assigned[name]):4d}  {name} (hand-written; version and tags synced)")
-            for line in retagged:
-                print(f"        {line}")
+            sync(name, len(assigned[name]))
             continue
         n = render(name, desc, args.version, components(name, assigned[name]))
         print(f"{n:4d}  {name}")
+    # Not in GROUPS: the spoke carries images those groups own, and partition() is
+    # first-match-wins, so a spoke group would steal them from the packages that own them.
+    sync("app-rancher-spoke")
     print(f"{len(images):4d}  total")
 
 

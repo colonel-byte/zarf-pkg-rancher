@@ -1,0 +1,26 @@
+# yaml-language-server: $schema=../../schema/zarf-v1alpha1-package-prerequisites-schema.json
+---
+apiVersion: colonel-byte.dev/v1alpha1
+kind: PackagePrerequisites
+metadata:
+  package: app-rancher-spoke
+  version: 2.15.2
+  description: >
+    Prerequisites for joining this cluster to a hub Rancher: the Zarf registry the
+    downstream images are rewritten to. No Kubernetes range is stated: what this
+    cluster's version has to be is the hub's constraint, not this package's. That it
+    can reach the hub's ingress, and the hub can reach nothing of it, is in the README
+    -- reachability is not expressible here.
+
+requires:
+  packages:
+    # Zarf's registry and agent. `zarf package list` reports this as `init`.
+    - name: init
+
+provides:
+  capabilities:
+    - name: rancher-spoke-agent
+      version: "2.15.2"
+  namespaces:
+    - cattle-system
+    - cattle-fleet-system
